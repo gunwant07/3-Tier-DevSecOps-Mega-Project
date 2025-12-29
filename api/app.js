@@ -2,24 +2,12 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken'); // (still unused, but kept)
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const userRoutes = require('./routes/userRoutes');
 const authRoutes = require('./routes/authRoutes');
 const db = require('./models/db'); // MySQL pool connection
-
-// 🔹 Prometheus client setup
-const client = require('prom-client');
-const register = new client.Registry();
-client.collectDefaultMetrics({ register });
-
-const httpRequestCounter = new client.Counter({
-  name: 'http_requests_total',
-  help: 'Total number of HTTP requests',
-  labelNames: ['method', 'route', 'status'],
-});
-register.registerMetric(httpRequestCounter);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -28,60 +16,31 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(bodyParser.json());
 
-// 🔹 Metrics middleware
-app.use((req, res, next) => {
-  res.on('finish', () => {
-    httpRequestCounter.inc({
-      method: req.method,
-      route: req.route?.path || req.path,
-      status: res.statusCode,
-    });
-  });
-  next();
-});
-
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 
-// 🔹 Metrics endpoint
-app.get('/metrics', async (req, res) => {
-  res.set('Content-Type', register.contentType);
-  res.end(await register.metrics());
-});
-
-// 🔹 Function to wait until MySQL is ready
+// Function to wait until MySQL is ready
 const waitForDb = async (retries = 30, delay = 2000) => {
   while (retries > 0) {
     try {
-      const [rows] = await db.promise().query(
-        "SHOW TABLES LIKE 'users'"
-      );
-
+      const [rows] = await db.promise().query("SHOW TABLES LIKE 'users'");
       if (rows.length > 0) {
-        console.log('✅ MySQL users table found.');
+        console.log('✅ MySQL `users` table found.');
         return;
       }
-
-      console.log(
-        `⏳ Waiting for MySQL (users table)... Retries left: ${retries}`
-      );
+      console.log(`⏳ Waiting for MySQL (users table)... Retries left: ${retries}`);
     } catch (err) {
-      console.error(
-        `🔴 MySQL query failed: ${err.message}`
-      );
+      console.error(`🔴 MySQL query failed: ${err.message}`);
     }
 
     retries--;
     await new Promise(res => setTimeout(res, delay));
   }
-
-  throw new Error(
-    '❌ MySQL users table not available after multiple retries.'
-  );
+  throw new Error('❌ MySQL `users` table not available after multiple retries.');
 };
 
-// 🔹 Function to seed admin user if not exists
+// Function to seed admin user if not exists
 const seedAdminUser = async () => {
   const name = process.env.ADMIN_NAME || 'Admin User';
   const email = process.env.ADMIN_EMAIL || 'admin@example.com';
@@ -96,33 +55,27 @@ const seedAdminUser = async () => {
 
     if (existing.length === 0) {
       const hashed = await bcrypt.hash(password, 10);
-
       await db.promise().query(
         'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
         [name, email, hashed, role]
       );
-
       console.log(`✅ Admin user created → ${email}`);
     } else {
       console.log(`ℹ️ Admin user already exists → ${email}`);
     }
   } catch (err) {
-    console.error(
-      `❌ Admin seeding failed: ${err.message}`
-    );
+    console.error(`❌ Admin seeding failed: ${err.message}`);
   }
 };
 
-// 🔹 Start server
+// Start server
 (async () => {
   try {
     await waitForDb();
     await seedAdminUser();
 
     app.listen(PORT, () => {
-      console.log(
-        `🚀 Server running on http://0.0.0.0:${PORT}`
-      );
+      console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
     });
   } catch (err) {
     console.error(err.message);
